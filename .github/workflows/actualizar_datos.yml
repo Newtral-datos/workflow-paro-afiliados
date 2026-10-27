@@ -27,8 +27,24 @@ jobs:
       - run: python ministerios/actualizar.py
 
       - name: Guardar cambios
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add datos/
-          git diff --staged --quiet || (git commit -m "Datos de paro y afiliación $(date -u +%Y-%m-%d)" && git push)
+          git diff --staged --quiet || (git commit -m "Datos de paro y afiliación $(date -u +%Y-%m-%d)" && git push && echo "cambios=true" >> "$GITHUB_OUTPUT")
+
+      # Datawrapper no vuelve a leer el CSV por su cuenta: se le pide que lo recargue y republique.
+      # Se espera 5 minutos para que raw.githubusercontent.com deje de servir la versión en caché.
+      - name: Republicar gráficos de Datawrapper
+        if: steps.commit.outputs.cambios == 'true'
+        env:
+          DW_TOKEN: ${{ secrets.DATAWRAPPER_TOKEN }}
+          GRAFICOS: ${{ vars.DATAWRAPPER_GRAFICOS }}
+        run: |
+          sleep 300
+          for id in $GRAFICOS; do
+            curl -sS --fail-with-body -X POST -H "Authorization: Bearer $DW_TOKEN" "https://api.datawrapper.de/v3/charts/$id/data/refresh"
+            curl -sS --fail-with-body -X POST -H "Authorization: Bearer $DW_TOKEN" "https://api.datawrapper.de/v3/charts/$id/publish" -o /dev/null
+            echo "Republicado $id"
+          done
