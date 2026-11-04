@@ -12,11 +12,19 @@ Salidas (carpeta datos/ en la raíz del proyecto):
   nota.json           -> pie de gráfico para Datawrapper: "Actualizado por última vez el
                          dd/mm/aaaa", con la fecha en que se recogió el dato más reciente.
 
+Entrada opcional:
+  paro_provisional.json -> {"AAAA-MM": parados} con cifras de la nota de prensa del Ministerio de
+                           Trabajo, para los meses que el SEPE aún no ha subido en .xls. Se usan
+                           solo mientras falte el fichero del SEPE; esos meses se siguen
+                           consultando en cada ejecución y, cuando el SEPE publica, el dato oficial
+                           sustituye al provisional y el mes se borra de este fichero.
+
 El paro se consulta mes a mes y solo los meses que no están ya en el CSV. La afiliación es un
 único fichero pequeño con toda la serie y se vuelve a leer entera.
 
 Si después del día 7 de un mes todavía falta el dato del mes anterior, el script termina con
-error para que GitHub Actions avise por correo.
+error para que GitHub Actions avise por correo. Si lo que falta es solo el .xls de un mes que ya
+tiene cifra provisional, deja un aviso en el log de Actions en lugar de fallar.
 
 Requisitos: pip install -r requirements.txt
 """
@@ -36,6 +44,7 @@ from paro_registrado_sepe import PRIMER_MES, parados_mes
 DATOS = Path(__file__).resolve().parent.parent / "datos"
 CSV = DATOS / "paro_afiliacion.csv"
 NOTA = DATOS / "nota.json"
+PROVISIONAL = DATOS / "paro_provisional.json"
 SERIES = ["parados", "afiliados"]
 # Ambos organismos publican hacia el segundo día laborable del mes siguiente
 DIA_LIMITE = 7
@@ -58,9 +67,15 @@ def main():
 
     previo = pd.read_csv(CSV) if CSV.exists() else pd.DataFrame(columns=["fecha", *SERIES])
 
-    # Paro: solo los meses que faltan
+    # Cifras provisionales de la nota de prensa, a la espera del .xls del SEPE
+    provisional = json.loads(PROVISIONAL.read_text(encoding="utf-8")) if PROVISIONAL.exists() else {}
+    provisional = {f"{k}-01": int(v) for k, v in provisional.items()}
+
+    # Paro: solo los meses que faltan. Los provisionales cuentan como pendientes.
     paro = {} if args.rehacer else previo.dropna(subset=["parados"]).set_index("fecha")["parados"].to_dict()
-    avisos = []
+    for fecha in provisional:
+        paro.pop(fecha, None)
+    avisos, confirmados = [], []
     for y, m in meses(PRIMER_MES, hoy):
         fecha = f"{y}-{m:02d}-01"
         if fecha in paro:
@@ -68,9 +83,22 @@ def main():
         parados, motivo = parados_mes(y, m)
         if parados is None:
             avisos.append(f"paro {fecha[:7]}: {motivo}")
+            if fecha in provisional:
+                paro[fecha] = provisional[fecha]
+                print(f"paro {fecha[:7]}: {provisional[fecha]:,} (provisional)".replace(",", "."))
         else:
             paro[fecha] = parados
             print(f"paro {fecha[:7]}: {parados:,}".replace(",", "."))
+            if fecha in provisional:
+                confirmados.append(fecha)
+                if parados != provisional[fecha]:
+                    print(f"::warning::paro {fecha[:7]}: el SEPE da {parados}, distinto del "
+                          f"provisional {provisional[fecha]}; se usa el del SEPE")
+
+    if confirmados:
+        resto = {k[:7]: v for k, v in sorted(provisional.items()) if k not in confirmados}
+        PROVISIONAL.write_text(json.dumps(resto, indent=2) + "\n", encoding="utf-8")
+        print("Provisional sustituido por el dato del SEPE:", ", ".join(f[:7] for f in confirmados))
 
     afiliacion = serie_afiliacion().set_index("fecha")["afiliados"]
 
@@ -94,7 +122,7 @@ def main():
     # Nota: la fecha solo cambia cuando entra un dato nuevo (un mes más en cualquiera de las series)
     ultimo_antes = {s: previo.dropna(subset=[s])["fecha"].max() if s in previo else None for s in SERIES}
     ultimo_ahora = {s: df.dropna(subset=[s])["fecha"].max() for s in SERIES}
-    if ultimo_ahora != ultimo_antes or not NOTA.exists():
+    if ultimo_ahora != ultimo_antes or confirmados or not NOTA.exists():
         nota = {"annotate": {"notes": f"Actualizado por última vez el {hoy:%d/%m/%Y}"}}
         NOTA.write_text(json.dumps(nota, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print("Nota actualizada:", nota["annotate"]["notes"])
@@ -108,6 +136,9 @@ def main():
         if retrasados:
             print("\n".join(avisos), file=sys.stderr)
             sys.exit(f"ERROR: falta el dato de {mes_anterior[:7]} en: {', '.join(retrasados)}")
+        pendientes = [f[:7] for f in provisional if f not in confirmados]
+        if pendientes:
+            print(f"::warning::paro provisional, sin .xls del SEPE todavía: {', '.join(pendientes)}")
 
 
 if __name__ == "__main__":

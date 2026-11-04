@@ -36,6 +36,26 @@ Pie del gráfico, en el formato de metadatos externos de Datawrapper:
 La fecha es la del día en que el script recogió el dato más reciente. Solo cambia cuando entra un
 mes nuevo de cualquiera de las dos series; las ejecuciones sin datos nuevos no la tocan.
 
+### `datos/paro_provisional.json` (se edita a mano)
+
+El Ministerio de Trabajo da la cifra de paro en su nota de prensa, pero el SEPE a veces tarda unos
+días en subir el `.xls`. Para que el gráfico no se quede sin el mes, se puede meter la cifra de la
+nota aquí:
+
+```json
+{
+  "2026-10": 2422633
+}
+```
+
+- Mientras el SEPE no publique el `.xls`, el script usa esta cifra (las variaciones se calculan
+  solas) y deja un aviso en el log de Actions.
+- Esos meses se siguen consultando en cada ejecución. Cuando el SEPE publica, el dato oficial
+  sustituye al provisional, el mes se borra de este fichero y, si las cifras no coinciden, queda
+  un aviso en el log.
+- Después de editarlo hay que hacer push y lanzar el workflow a mano para que se republiquen los
+  gráficos de Datawrapper.
+
 ### URLs para Datawrapper
 
 - Datos: `https://raw.githubusercontent.com/Newtral-datos/workflow-paro-afiliados/main/datos/paro_afiliacion.csv`
@@ -110,7 +130,8 @@ datos/                                   salidas (las actualiza el workflow)
 requirements.txt
 ```
 
-- **`actualizar.py`**: lee el CSV existente y consulta al SEPE solo los meses de paro que faltan.
+- **`actualizar.py`**: lee el CSV existente y consulta al SEPE solo los meses de paro que faltan
+  (más los que están en `paro_provisional.json`, que usa si el SEPE aún no los tiene).
   Lee entera la serie de afiliación, une las dos series, calcula las variaciones y escribe el CSV.
   Actualiza la nota solo si ha entrado un mes nuevo. Si después del día 7 todavía falta el dato del
   mes anterior, termina con error para que GitHub avise por correo.
