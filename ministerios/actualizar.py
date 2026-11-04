@@ -23,8 +23,8 @@ El paro se consulta mes a mes y solo los meses que no están ya en el CSV. La af
 único fichero pequeño con toda la serie y se vuelve a leer entera.
 
 Si después del día 7 de un mes todavía falta el dato del mes anterior, el script termina con
-error para que GitHub Actions avise por correo. Si lo que falta es solo el .xls de un mes que ya
-tiene cifra provisional, deja un aviso en el log de Actions en lugar de fallar.
+error para que GitHub Actions avise por correo. Un mes con cifra provisional no cuenta como
+falta: mientras siga siendo provisional, se deja un aviso en el log de Actions.
 
 Requisitos: pip install -r requirements.txt
 """
@@ -128,6 +128,9 @@ def main():
         print("Nota actualizada:", nota["annotate"]["notes"])
 
     print(f"Último paro: {ultimo_ahora['parados'][:7]} | última afiliación: {ultimo_ahora['afiliados'][:7]}")
+    pendientes = [f[:7] for f in provisional if f not in confirmados]
+    if pendientes:
+        print(f"::warning::paro provisional, sin .xls del SEPE todavía: {', '.join(pendientes)}")
 
     # ¿Falta el mes anterior cuando ya debería estar publicado?
     mes_anterior = (hoy.replace(day=1) - dt.timedelta(days=1)).strftime("%Y-%m-01")
@@ -136,9 +139,6 @@ def main():
         if retrasados:
             print("\n".join(avisos), file=sys.stderr)
             sys.exit(f"ERROR: falta el dato de {mes_anterior[:7]} en: {', '.join(retrasados)}")
-        pendientes = [f[:7] for f in provisional if f not in confirmados]
-        if pendientes:
-            print(f"::warning::paro provisional, sin .xls del SEPE todavía: {', '.join(pendientes)}")
 
 
 if __name__ == "__main__":
